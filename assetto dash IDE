@@ -1,0 +1,84 @@
+// SimHub -> ESP32 -> LCD 16x2
+// Serial format expected: SPEED;RPM;GEAR\n   (e.g. "120;6500;3\n")
+
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+LiquidCrystal_I2C lcd(0x27, 16, 2); // ak tvoja adresa nie je 0x27, skúsi 0x3F
+
+// Buffer pre prijaté dáta
+String line = "";
+
+void setup() {
+  Serial.begin(115200);         // musí zodpovedať SimHub nastaveniu (115200)
+  lcd.init();
+  lcd.backlight();
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("SimHub LCD ready");
+  delay(800);
+  lcd.clear();
+}
+
+// Pomocná funkcia: odstráni medzery na začiatku/konci
+String trimStr(String s) {
+  while (s.length() && isWhitespace(s.charAt(0))) s.remove(0,1);
+  while (s.length() && isWhitespace(s.charAt(s.length()-1))) s.remove(s.length()-1,1);
+  return s;
+}
+
+// Spracuj prijatý riadok vo formáte "speed;rpm;gear"
+void processLine(String r) {
+  // odstráni CR ak je
+  r.replace("\r", "");
+  r = trimStr(r);
+  if (r.length() == 0) return;
+
+  // rozdelíme podľa stredníka
+  int i1 = r.indexOf(';');
+  int i2 = r.indexOf(';', i1 + 1);
+
+  String speed = (i1 > 0) ? r.substring(0, i1) : "";
+  String rpm   = (i1 > 0 && i2 > i1) ? r.substring(i1+1, i2) : "";
+  String gear  = (i2 > i1) ? r.substring(i2+1) : "";
+
+  speed = trimStr(speed);
+  rpm   = trimStr(rpm);
+  gear  = trimStr(gear);
+
+  // bezpečné zobrazenie (ak niečo chýba, zobraz '-')
+  if (speed.length() == 0) speed = "-";
+  if (rpm.length() == 0)   rpm = "-";
+  if (gear.length() == 0)  gear = "-";
+
+  // Na LCD:
+  // prvý riadok:      "SPD:120km/h G:3"
+  // druhý riadok:     "RPM: 6500"
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("SPD:");
+  lcd.print(speed);
+  // pridáme G len ak sa zmestí
+  lcd.setCursor(11,0);
+  lcd.print("G:");
+  lcd.print(gear);
+
+  lcd.setCursor(0,1);
+  lcd.print("RPM:");
+  lcd.print(rpm);
+}
+
+// Hlavný loop: čítaj serial a skladaj riadok až po '\n'
+void loop() {
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if (c == '\n') {
+      processLine(line);
+      line = "";
+    } else {
+      line += c;
+      // obrana proti príliš dlhému riadku
+      if (line.length() > 200) line = "";
+    }
+  }
+}
