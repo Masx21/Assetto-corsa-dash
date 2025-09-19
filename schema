@@ -4,7 +4,7 @@ SDA → GPIO21
 
 SCL (SCK) → GPIO22
 
-OLED VCC → 3.3V (ak modul povolí 5V tak ok, ale 3.3V bezpečnejšie)
+OLED VCC → 3.3V 
 
 LCD VCC (I2C modul) → 5V
 
@@ -30,7 +30,7 @@ GND → spoločná zem
 
 Kondenzátor 1000 µF blízko matice
 
-4×4 Button matrix (ponechávame fungujúce zapojenie, tu sú piny, ktoré použijeme)
+4×4 Button matrix 
 
 ROW1 → GPIO13
 
