@@ -1,84 +1,270 @@
-// SimHub -> ESP32 -> LCD 16x2
-// Serial format expected: SPEED;RPM;GEAR\n   (e.g. "120;6500;3\n")
+/* Upravené podľa požiadaviek:
+   - LCD: top = L:(lapCount) P:(position) T:MM:SS.CC
+           bottom = ABS/TC
+   - OLED: speed big (top right), RPM big číslo pod ním
+   - Matrix: N = very dim white (~10%), others colored (~30%)
+   - Strip: same revbar, blink at RPM >= 7000
+   - Parser expects semicolon-separated values (SimHub CustomSerial)
+*/
 
 #include <Wire.h>
+#include <U8g2lib.h>
 #include <LiquidCrystal_I2C.h>
+#include <Adafruit_NeoPixel.h>
 
-LiquidCrystal_I2C lcd(0x27, 16, 2); // ak tvoja adresa nie je 0x27, skúsi 0x3F
+// ----------------- PIN / HW -----------------
+#define I2C_SDA 21
+#define I2C_SCL 22
 
-// Buffer pre prijaté dáta
-String line = "";
+U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
+LiquidCrystal_I2C lcd(0x27, 16, 2);
 
-void setup() {
-  Serial.begin(115200);         // musí zodpovedať SimHub nastaveniu (115200)
-  lcd.init();
-  lcd.backlight();
-  lcd.clear();
-  lcd.setCursor(0,0);
-  lcd.print("SimHub LCD ready");
-  delay(800);
-  lcd.clear();
+// Strip (10)
+#define STRIP_PIN 25
+#define STRIP_COUNT 10
+Adafruit_NeoPixel strip(STRIP_COUNT, STRIP_PIN, NEO_GRB + NEO_KHZ800);
+const uint8_t STRIP_BRIGHT = 77; // ~30%
+
+// Matrix (8x8, 64)
+#define MATRIX_PIN 18
+#define MATRIX_COUNT 64
+Adafruit_NeoPixel matrix(MATRIX_COUNT, MATRIX_PIN, NEO_GRB + NEO_KHZ800);
+const uint8_t MATRIX_BRIGHT = 77; // ~30%
+
+// ----------------- Telemetry vars -----------------
+String inBuf = "";
+bool haveLine = false;
+
+int speed_kmh = 0;
+int rpm = 0;
+String gear = "N";      // keeps textual gear
+float rpmPercent = 0.0; // 0..100
+bool tc = false;
+bool absOn = false;
+float lapTimeSec = 0.0; // seconds with fraction
+int positionDriver = 0;
+int lapCount = -1;      // Completed laps (lap number), -1 = unknown
+
+const int MAX_RPM_BLINK = 7000;
+const int RPM_MAX_MAP = 7000; // map RPM scale to strip
+
+// ---------- Gear colors (fixed, calm) ----------
+uint32_t gearColorN, gearColor1, gearColor2, gearColor3, gearColor4, gearColor5, gearColor6, gearColor7, gearColor8, gearColorR;
+
+void initGearColors() {
+  gearColorN = matrix.Color(25,25,25);    // neutral (very dim white ~10%)
+  gearColor1 = matrix.Color(40, 80, 200); // blue
+  gearColor2 = matrix.Color(20,200,80);   // green
+  gearColor3 = matrix.Color(200,200,40);  // yellow
+  gearColor4 = matrix.Color(220,120,20);  // orange
+  gearColor5 = matrix.Color(200,40,40);   // red
+  gearColor6 = matrix.Color(150,50,180);  // purple
+  gearColor7 = matrix.Color(20,180,180);  // cyan
+  gearColor8 = matrix.Color(200,40,120);  // pink
+  gearColorR = matrix.Color(255,40,40);   // red for reverse
 }
 
-// Pomocná funkcia: odstráni medzery na začiatku/konci
-String trimStr(String s) {
-  while (s.length() && isWhitespace(s.charAt(0))) s.remove(0,1);
-  while (s.length() && isWhitespace(s.charAt(s.length()-1))) s.remove(s.length()-1,1);
-  return s;
+// ---------- simple 8x8 glyphs for digits/letters ----------
+const uint8_t GEAR_GLYPHS[][8] = {
+  // R (index 0)
+  {B11110000,B11011000,B11011000,B11110000,B11100000,B11010000,B11011000,B00000000},
+  // N (1)
+  {B11001100,B11101100,B11101100,B11011100,B11011100,B11001110,B11001110,B00000000},
+  // 1 (2)
+  {B00110000,B01110000,B00110000,B00110000,B00110000,B00110000,B01111000,B00000000},
+  // 2 (3)
+  {B01111000,B11001100,B00001100,B00111000,B01100000,B11000000,B11111100,B00000000},
+  // 3 (4)
+  {B01111000,B11001100,B00001100,B00111000,B00001100,B11001100,B01111000,B00000000},
+  // 4 (5)
+  {B00011000,B00111000,B01011000,B10011000,B11111100,B00011000,B00011000,B00000000},
+  // 5 (6)
+  {B11111100,B11000000,B11111000,B00001100,B00001100,B11001100,B01111000,B00000000},
+  // 6 (7)
+  {B00111100,B01100000,B11000000,B11111000,B11001100,B11001100,B01111000,B00000000},
+  // 7 (8)
+  {B11111100,B11001100,B00011000,B00110000,B00110000,B00110000,B00110000,B00000000}
+};
+
+// ---------- helper to map x,y to LED index ----------
+inline int matrixIndex(int x, int y) { 
+  if (x < 0) x = 0; if (x > 7) x = 7;
+  if (y < 0) y = 0; if (y > 7) y = 7;
+  return y*8 + x;
 }
 
-// Spracuj prijatý riadok vo formáte "speed;rpm;gear"
-void processLine(String r) {
-  // odstráni CR ak je
-  r.replace("\r", "");
-  r = trimStr(r);
-  if (r.length() == 0) return;
+void drawGlyphToMatrix(const uint8_t glyph[8], uint32_t color) {
+  for (int row=0; row<8; row++) {
+    uint8_t b = glyph[row];
+    for (int col=0; col<8; col++) {
+      bool bit = b & (0x80 >> col);
+      int idx = matrixIndex(col, row);
+      if (bit) matrix.setPixelColor(idx, color);
+      else matrix.setPixelColor(idx, 0);
+    }
+  }
+  matrix.show();
+}
 
-  // rozdelíme podľa stredníka
-  int i1 = r.indexOf(';');
-  int i2 = r.indexOf(';', i1 + 1);
+// ---------- parsing incoming semicolon-separated line ----------
+void parseLine(String s) {
+  s.replace("\r", "");
+  s.trim();
+  if (s.length() == 0) return;
+  String tok[16];
+  int t=0; int st=0;
+  for (int i=0;i<=s.length() && t<16;i++) {
+    if (i==s.length() || s.charAt(i) == ';') {
+      tok[t++] = s.substring(st, i);
+      st = i+1;
+    }
+  }
+  if (t >= 1) speed_kmh = tok[0].toInt();
+  if (t >= 2) rpm = tok[1].toInt();
+  if (t >= 3) gear = tok[2];
+  if (t >= 4) rpmPercent = tok[3].toFloat();
+  if (t >= 8) tc = (tok[7] == "1");
+  if (t >= 9) absOn = (tok[8] == "1");
+  if (t >= 10) lapTimeSec = tok[9].toFloat();
+  if (t >= 11) positionDriver = tok[10].toInt();
+  if (t >= 12) lapCount = tok[11].toInt();
+}
 
-  String speed = (i1 > 0) ? r.substring(0, i1) : "";
-  String rpm   = (i1 > 0 && i2 > i1) ? r.substring(i1+1, i2) : "";
-  String gear  = (i2 > i1) ? r.substring(i2+1) : "";
-
-  speed = trimStr(speed);
-  rpm   = trimStr(rpm);
-  gear  = trimStr(gear);
-
-  // bezpečné zobrazenie (ak niečo chýba, zobraz '-')
-  if (speed.length() == 0) speed = "-";
-  if (rpm.length() == 0)   rpm = "-";
-  if (gear.length() == 0)  gear = "-";
-
-  // Na LCD:
-  // prvý riadok:      "SPD:120km/h G:3"
-  // druhý riadok:     "RPM: 6500"
+// ---------- update LCD ----------
+void updateLCD() {
   lcd.clear();
   lcd.setCursor(0,0);
-  lcd.print("SPD:");
-  lcd.print(speed);
-  // pridáme G len ak sa zmestí
-  lcd.setCursor(11,0);
-  lcd.print("G:");
-  lcd.print(gear);
+  lcd.print("L:");
+  if (lapCount >= 0) lcd.print(lapCount); else lcd.print("-");
+  lcd.print(" P:");
+  lcd.print(positionDriver);
+
+  int totalCentis = (int)round(lapTimeSec * 100.0);
+  int cs = totalCentis % 100;
+  int totalSec = totalCentis / 100;
+  int sec = totalSec % 60;
+  int minv = totalSec / 60;
+  char buf[9];
+  snprintf(buf, sizeof(buf), " T:%02d:%02d.%02d", minv, sec, cs);
+  lcd.print(buf);
 
   lcd.setCursor(0,1);
-  lcd.print("RPM:");
-  lcd.print(rpm);
+  lcd.print("ABS:");
+  lcd.print(absOn ? "ON " : "OFF");
+  lcd.print(" TC:");
+  lcd.print(tc ? "ON" : "OFF");
 }
 
-// Hlavný loop: čítaj serial a skladaj riadok až po '\n'
+// ---------- update OLED ----------
+void updateOLED() {
+  u8g2.clearBuffer();
+
+  // speed big (right)
+  u8g2.setFont(u8g2_font_fub25_tr);
+  char sbuf[8];
+  snprintf(sbuf, sizeof(sbuf), "%d", speed_kmh);
+  int16_t sw = u8g2.getUTF8Width(sbuf);
+  u8g2.setCursor(128 - sw, 28);
+  u8g2.print(sbuf);
+
+  // rpm big under speed
+  u8g2.setFont(u8g2_font_fub20_tr);
+  char rbuf[12];
+  snprintf(rbuf, sizeof(rbuf), "%d", rpm);
+  int16_t rw = u8g2.getUTF8Width(rbuf);
+  u8g2.setCursor(128 - rw, 60);
+  u8g2.print(rbuf);
+
+  u8g2.sendBuffer();
+}
+
+// ---------- update strip ----------
+void updateStrip() {
+  static unsigned long lastBlink = 0;
+  static bool blinkState = false;
+  if (rpm >= MAX_RPM_BLINK) {
+    if (millis() - lastBlink > 30) { blinkState = !blinkState; lastBlink = millis(); }
+    uint32_t c = blinkState ? strip.Color(255,0,0) : 0;
+    for (int i=0;i<STRIP_COUNT;i++) strip.setPixelColor(i, c);
+    strip.show();
+    return;
+  }
+
+  int ledsOn = map(constrain(rpm, 0, RPM_MAX_MAP), 0, RPM_MAX_MAP, 0, STRIP_COUNT);
+  for (int i=0;i<STRIP_COUNT;i++) {
+    if (i < ledsOn) {
+      float p = (float)i / (float)STRIP_COUNT;
+      if (p < 0.33) strip.setPixelColor(i, strip.Color(0, STRIP_BRIGHT, 0));
+      else if (p < 0.66) strip.setPixelColor(i, strip.Color(STRIP_BRIGHT, STRIP_BRIGHT/2, 0));
+      else strip.setPixelColor(i, strip.Color(STRIP_BRIGHT, 0, 0));
+    } else strip.setPixelColor(i, 0);
+  }
+  strip.show();
+}
+
+// ---------- update matrix ----------
+void updateMatrix() {
+  int glyphIndex = -1;
+  if (gear.equalsIgnoreCase("R")) glyphIndex = 0;
+  else if (gear.equalsIgnoreCase("N")) glyphIndex = 1;
+  else {
+    int g = gear.toInt();
+    if (g >= 1 && g <= 7) glyphIndex = 1 + g;
+  }
+  if (glyphIndex < 0) glyphIndex = 1;
+
+  uint32_t col;
+  if (glyphIndex == 0) col = gearColorR;
+  else if (glyphIndex == 1) col = gearColorN;
+  else {
+    int g = glyphIndex - 1;
+    switch (g) {
+      case 1: col = gearColor1; break;
+      case 2: col = gearColor2; break;
+      case 3: col = gearColor3; break;
+      case 4: col = gearColor4; break;
+      case 5: col = gearColor5; break;
+      case 6: col = gearColor6; break;
+      case 7: col = gearColor7; break;
+      default: col = gearColorN; break;
+    }
+  }
+
+  drawGlyphToMatrix(GEAR_GLYPHS[glyphIndex], col);
+}
+
+// ---------- Arduino setup / loop ----------
+unsigned long lastUpdate = 0;
+void setup() {
+  Serial.begin(115200);
+  Wire.begin(I2C_SDA, I2C_SCL);
+
+  u8g2.begin();
+  lcd.init(); lcd.backlight();
+
+  strip.begin(); strip.setBrightness(STRIP_BRIGHT); strip.show();
+  matrix.begin(); matrix.setBrightness(MATRIX_BRIGHT); matrix.show();
+
+  initGearColors();
+}
+
 void loop() {
   while (Serial.available()) {
     char c = (char)Serial.read();
-    if (c == '\n') {
-      processLine(line);
-      line = "";
-    } else {
-      line += c;
-      // obrana proti príliš dlhému riadku
-      if (line.length() > 200) line = "";
-    }
+    if (c == '\n') haveLine = true;
+    else inBuf += c;
+  }
+  if (haveLine) {
+    parseLine(inBuf);
+    inBuf = "";
+    haveLine = false;
+  }
+
+  if (millis() - lastUpdate > 100) {
+    updateLCD();
+    updateOLED();
+    updateStrip();
+    updateMatrix();
+    lastUpdate = millis();
   }
 }
