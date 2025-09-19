@@ -1,3 +1,8 @@
+no sme na tom takto ono odosiela udaje aj vsetko funguje len sim hub ani nevie precitat ze v tej sprave co mozem vidiet sa nemenia hodnoty ABS TC a cas kola simhub ho proste nevie a v kolkatom kole som som zistil ze funguje ale pocita to od 0 ze prve kolo je 0 tak tam dopis niekde aby ku kazdej hodnote dalo +1 aby prve bolo ozaj prve a nie 0 druhe 2 a nie 1
+
+
+
+
 I²C (OLED 128×64 SH1106 + LCD 16×2 I2C)
 
 SDA → GPIO21
