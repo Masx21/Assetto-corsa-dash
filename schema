@@ -58,6 +58,6 @@ FlatFront → GPIO19
 
 FlatRear → GPIO23
 
-Handbrake → GPIO15
+Handbrake → GPI34
 
-ShiftLight (blik pri vysokých RPM) → GPIO2
+ShiftLight (blik pri vysokých RPM) → GPI35
