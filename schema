@@ -30,34 +30,3 @@ GND → spoločná zem
 
 Kondenzátor 1000 µF blízko matice
 
-4×4 Button matrix 
-
-ROW1 → GPIO13
-
-ROW2 → GPIO12
-
-ROW3 → GPIO14
-
-ROW4 → GPIO27
-
-COL1 → GPIO26
-
-COL2 → GPIO33
-
-COL3 → GPIO32
-
-COL4 → GPIO4
-
-Indikačné LED (každá cez 220 Ω) — PWM na 70%
-
-TC → GPIO16
-
-ABS → GPIO17
-
-FlatFront → GPIO19
-
-FlatRear → GPIO23
-
-Handbrake → GPI34
-
-ShiftLight (blik pri vysokých RPM) → GPI35
