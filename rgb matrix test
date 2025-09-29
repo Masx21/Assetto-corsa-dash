@@ -1,0 +1,33 @@
+#include <Adafruit_NeoPixel.h>
+
+#define MATRIX_PIN 18     // zmeň na svoj pin
+#define MATRIX_COUNT 64   // 8x8 = 64 LED
+
+Adafruit_NeoPixel matrix(MATRIX_COUNT, MATRIX_PIN, NEO_GRB + NEO_KHZ800);
+
+void setup() {
+  matrix.begin();
+  matrix.show(); // všetko off
+}
+
+void loop() {
+  // celé červené
+  for(int i=0; i<MATRIX_COUNT; i++) matrix.setPixelColor(i, matrix.Color(255,0,0));
+  matrix.show();
+  delay(1000);
+
+  // celé zelené
+  for(int i=0; i<MATRIX_COUNT; i++) matrix.setPixelColor(i, matrix.Color(0,255,0));
+  matrix.show();
+  delay(1000);
+
+  // celé modré
+  for(int i=0; i<MATRIX_COUNT; i++) matrix.setPixelColor(i, matrix.Color(0,0,255));
+  matrix.show();
+  delay(1000);
+
+  // celé vypnúť
+  matrix.clear();
+  matrix.show();
+  delay(1000);
+}
