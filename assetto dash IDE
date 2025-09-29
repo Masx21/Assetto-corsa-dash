@@ -131,9 +131,9 @@ void updateLCD() {
 
   // druhý riadok: rychlost a otacky
   lcd.setCursor(0,1);
-  lcd.print("R:");
+  lcd.print("");
   lcd.print(speed_kmh);
-  lcd.print(" O:");
+  lcd.print("  ");
   lcd.print(rpm);
 }
 
@@ -153,9 +153,9 @@ void updateOLED() {
   u8g2.setFont(u8g2_font_5x7_tr);
   char buf[32];
   snprintf(buf, sizeof(buf), "T:%d B:%d C:%d",
-           (int)(throttlePercent*100),
-           (int)(brakePercent*100),
-           (int)(clutchPercent*100));
+           (int)(throttlePercent*10),
+           (int)(brakePercent*10),
+           (int)(clutchPercent*10));
   u8g2.setCursor(0, 60);
   u8g2.print(buf);
 
@@ -252,4 +252,3 @@ void loop() {
     lastUpdate = millis();
   }
 }
-
