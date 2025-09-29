@@ -183,7 +183,7 @@ void updateStrip() {
   static unsigned long lastBlink = 0;
   static bool blinkState = false;
   if (rpm >= MAX_RPM_BLINK) {
-    if (millis() - lastBlink > 30) { blinkState = !blinkState; lastBlink = millis(); }
+    if (millis() - lastBlink > 200) { blinkState = !blinkState; lastBlink = millis(); }
     uint32_t c = blinkState ? strip.Color(255,0,0) : 0;
     for (int i=0;i<STRIP_COUNT;i++) strip.setPixelColor(i, c);
     strip.show();
