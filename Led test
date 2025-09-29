@@ -1,0 +1,33 @@
+#include <Adafruit_NeoPixel.h>
+
+#define STRIP_PIN 25     // zmeň na svoj pin
+#define STRIP_COUNT 10   // počet LED na páse
+
+Adafruit_NeoPixel strip(STRIP_COUNT, STRIP_PIN, NEO_GRB + NEO_KHZ800);
+
+void setup() {
+  strip.begin();
+  strip.show(); // vypnúť všetky LED
+}
+
+void loop() {
+  // červená
+  for(int i=0; i<STRIP_COUNT; i++) strip.setPixelColor(i, strip.Color(255,0,0));
+  strip.show();
+  delay(1000);
+
+  // zelená
+  for(int i=0; i<STRIP_COUNT; i++) strip.setPixelColor(i, strip.Color(0,255,0));
+  strip.show();
+  delay(1000);
+
+  // modrá
+  for(int i=0; i<STRIP_COUNT; i++) strip.setPixelColor(i, strip.Color(0,0,255));
+  strip.show();
+  delay(1000);
+
+  // vypnúť
+  strip.clear();
+  strip.show();
+  delay(1000);
+}
