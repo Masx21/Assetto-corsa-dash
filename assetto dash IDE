@@ -1,12 +1,3 @@
-/* Upravené podľa požiadaviek:
-   - LCD: top = L:(lapCount) P:(position) T:MM:SS.CC
-           bottom = ABS/TC
-   - OLED: speed big (top right), RPM big číslo pod ním
-   - Matrix: N = very dim white (~10%), others colored (~30%)
-   - Strip: same revbar, blink at RPM >= 7000
-   - Parser expects semicolon-separated values (SimHub CustomSerial)
-*/
-
 #include <Wire.h>
 #include <U8g2lib.h>
 #include <LiquidCrystal_I2C.h>
@@ -37,53 +28,47 @@ bool haveLine = false;
 
 int speed_kmh = 0;
 int rpm = 0;
-String gear = "N";      // keeps textual gear
-float rpmPercent = 0.0; // 0..100
+String gear = "N";      
+float rpmPercent = 0.0; 
+float throttlePercent = 0.0;
+float brakePercent = 0.0;
+float clutchPercent = 0.0;
 bool tc = false;
 bool absOn = false;
-float lapTimeSec = 0.0; // seconds with fraction
+float lapTimeSec = 0.0; 
 int positionDriver = 0;
-int lapCount = -1;      // Completed laps (lap number), -1 = unknown
+int lapCount = -1;      
 
 const int MAX_RPM_BLINK = 7000;
-const int RPM_MAX_MAP = 7000; // map RPM scale to strip
+const int RPM_MAX_MAP = 7000; 
 
-// ---------- Gear colors (fixed, calm) ----------
+// ---------- Gear colors ----------
 uint32_t gearColorN, gearColor1, gearColor2, gearColor3, gearColor4, gearColor5, gearColor6, gearColor7, gearColor8, gearColorR;
 
 void initGearColors() {
-  gearColorN = matrix.Color(25,25,25);    // neutral (very dim white ~10%)
-  gearColor1 = matrix.Color(40, 80, 200); // blue
-  gearColor2 = matrix.Color(20,200,80);   // green
-  gearColor3 = matrix.Color(200,200,40);  // yellow
-  gearColor4 = matrix.Color(220,120,20);  // orange
-  gearColor5 = matrix.Color(200,40,40);   // red
-  gearColor6 = matrix.Color(150,50,180);  // purple
-  gearColor7 = matrix.Color(20,180,180);  // cyan
-  gearColor8 = matrix.Color(200,40,120);  // pink
-  gearColorR = matrix.Color(255,40,40);   // red for reverse
+  gearColorN = matrix.Color(25,25,25);    
+  gearColor1 = matrix.Color(40, 80, 200); 
+  gearColor2 = matrix.Color(20,200,80);   
+  gearColor3 = matrix.Color(200,200,40);  
+  gearColor4 = matrix.Color(220,120,20);  
+  gearColor5 = matrix.Color(200,40,40);   
+  gearColor6 = matrix.Color(150,50,180);  
+  gearColor7 = matrix.Color(20,180,180);  
+  gearColor8 = matrix.Color(200,40,120);  
+  gearColorR = matrix.Color(255,40,40);   
 }
 
-// ---------- simple 8x8 glyphs for digits/letters ----------
+// ---------- simple 8x8 glyphs ----------
 const uint8_t GEAR_GLYPHS[][8] = {
-  // R (index 0)
-  {B11110000,B11011000,B11011000,B11110000,B11100000,B11010000,B11011000,B00000000},
-  // N (1)
-  {B11001100,B11101100,B11101100,B11011100,B11011100,B11001110,B11001110,B00000000},
-  // 1 (2)
-  {B00110000,B01110000,B00110000,B00110000,B00110000,B00110000,B01111000,B00000000},
-  // 2 (3)
-  {B01111000,B11001100,B00001100,B00111000,B01100000,B11000000,B11111100,B00000000},
-  // 3 (4)
-  {B01111000,B11001100,B00001100,B00111000,B00001100,B11001100,B01111000,B00000000},
-  // 4 (5)
-  {B00011000,B00111000,B01011000,B10011000,B11111100,B00011000,B00011000,B00000000},
-  // 5 (6)
-  {B11111100,B11000000,B11111000,B00001100,B00001100,B11001100,B01111000,B00000000},
-  // 6 (7)
-  {B00111100,B01100000,B11000000,B11111000,B11001100,B11001100,B01111000,B00000000},
-  // 7 (8)
-  {B11111100,B11001100,B00011000,B00110000,B00110000,B00110000,B00110000,B00000000}
+  {B11110000,B11011000,B11011000,B11110000,B11100000,B11010000,B11011000,B00000000}, // R
+  {B11001100,B11101100,B11101100,B11011100,B11011100,B11001110,B11001110,B00000000}, // N
+  {B00110000,B01110000,B00110000,B00110000,B00110000,B00110000,B01111000,B00000000}, // 1
+  {B01111000,B11001100,B00001100,B00111000,B01100000,B11000000,B11111100,B00000000}, // 2
+  {B01111000,B11001100,B00001100,B00111000,B00001100,B11001100,B01111000,B00000000}, // 3
+  {B00011000,B00111000,B01011000,B10011000,B11111100,B00011000,B00011000,B00000000}, // 4
+  {B11111100,B11000000,B11111000,B00001100,B00001100,B11001100,B01111000,B00000000}, // 5
+  {B00111100,B01100000,B11000000,B11111000,B11001100,B11001100,B01111000,B00000000}, // 6
+  {B11111100,B11001100,B00011000,B00110000,B00110000,B00110000,B00110000,B00000000}  // 7
 };
 
 // ---------- helper to map x,y to LED index ----------
@@ -123,6 +108,9 @@ void parseLine(String s) {
   if (t >= 2) rpm = tok[1].toInt();
   if (t >= 3) gear = tok[2];
   if (t >= 4) rpmPercent = tok[3].toFloat();
+  if (t >= 5) throttlePercent = tok[4].toFloat();
+  if (t >= 6) brakePercent = tok[5].toFloat();
+  if (t >= 7) clutchPercent = tok[6].toFloat();
   if (t >= 8) tc = (tok[7] == "1");
   if (t >= 9) absOn = (tok[8] == "1");
   if (t >= 10) lapTimeSec = tok[9].toFloat();
@@ -133,47 +121,43 @@ void parseLine(String s) {
 // ---------- update LCD ----------
 void updateLCD() {
   lcd.clear();
+  
+  // prvý riadok: Lap +1 a pozícia
   lcd.setCursor(0,0);
   lcd.print("L:");
-  if (lapCount >= 0) lcd.print(lapCount); else lcd.print("-");
+  if (lapCount >= 0) lcd.print(lapCount + 1); else lcd.print("-");
   lcd.print(" P:");
   lcd.print(positionDriver);
 
-  int totalCentis = (int)round(lapTimeSec * 100.0);
-  int cs = totalCentis % 100;
-  int totalSec = totalCentis / 100;
-  int sec = totalSec % 60;
-  int minv = totalSec / 60;
-  char buf[9];
-  snprintf(buf, sizeof(buf), " T:%02d:%02d.%02d", minv, sec, cs);
-  lcd.print(buf);
-
+  // druhý riadok: rychlost a otacky
   lcd.setCursor(0,1);
-  lcd.print("ABS:");
-  lcd.print(absOn ? "ON " : "OFF");
-  lcd.print(" TC:");
-  lcd.print(tc ? "ON" : "OFF");
+  lcd.print("R:");
+  lcd.print(speed_kmh);
+  lcd.print(" O:");
+  lcd.print(rpm);
 }
 
 // ---------- update OLED ----------
 void updateOLED() {
   u8g2.clearBuffer();
 
-  // speed big (right)
+  // prvý riadok: rychlost
   u8g2.setFont(u8g2_font_fub25_tr);
   char sbuf[8];
   snprintf(sbuf, sizeof(sbuf), "%d", speed_kmh);
   int16_t sw = u8g2.getUTF8Width(sbuf);
-  u8g2.setCursor(128 - sw, 28);
+  u8g2.setCursor((128 - sw)/2, 28); // centrovane
   u8g2.print(sbuf);
 
-  // rpm big under speed
-  u8g2.setFont(u8g2_font_fub20_tr);
-  char rbuf[12];
-  snprintf(rbuf, sizeof(rbuf), "%d", rpm);
-  int16_t rw = u8g2.getUTF8Width(rbuf);
-  u8g2.setCursor(128 - rw, 60);
-  u8g2.print(rbuf);
+  // druhy riadok: T/B/C pedale percent
+  u8g2.setFont(u8g2_font_5x7_tr);
+  char buf[32];
+  snprintf(buf, sizeof(buf), "T:%d B:%d C:%d",
+           (int)(throttlePercent*100),
+           (int)(brakePercent*100),
+           (int)(clutchPercent*100));
+  u8g2.setCursor(0, 60);
+  u8g2.print(buf);
 
   u8g2.sendBuffer();
 }
@@ -268,3 +252,4 @@ void loop() {
     lastUpdate = millis();
   }
 }
+
