@@ -1,0 +1,20 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+// Vytvor LCD objekt na adrese 0x27 (16 stĺpcov, 2 riadky)
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+void setup() {
+  lcd.init();            // inicializácia
+  lcd.backlight();       // zapni podsvietenie
+
+  // Test text
+  lcd.setCursor(0,0);    // riadok 0, stĺpec 0
+  lcd.print("LCD TEST OK");
+  lcd.setCursor(0,1);    // riadok 1
+  lcd.print("Hello ESP32!");
+}
+
+void loop() {
+  // nič nerobíme, text zostane zobrazený
+}
